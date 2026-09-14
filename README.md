@@ -317,6 +317,10 @@ puts card details into an exception message and checks that neither rendered log
 expose them. Console trace correlation is checked manually as described above.
 
 CI builds and tests every push and pull request, and publishes the coverage summary on the run.
+An independent container smoke-test job builds the Docker image, starts the Compose stack, waits for
+both HTTP listeners, and runs the Postman collection with Newman 6.2.1. It uploads JUnit results (when
+the collection runs), container status and logs as `container-smoke-results`, including on failure,
+then always attempts to tear down the stack. A failed readiness check or collection fails the job.
 
 ## Project structure
 
