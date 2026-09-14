@@ -13,10 +13,52 @@ Three outcomes are possible:
 
 ## Running it
 
+### With Docker Compose
+
+Needs Docker with Linux containers and Docker Compose; no local .NET SDK is required.
+
+```bash
+docker compose up --build -d
+docker compose logs -f gateway
+```
+
+The gateway is available at `http://localhost:8081`. The simulator still uses host port `8080`;
+inside Compose, the gateway calls `http://bank_simulator:8080` using the service name. Both containers
+use port `8080` internally, but their host ports differ. Startup ordering is configured with
+`depends_on`; it does not guarantee the simulator is ready to accept requests immediately.
+
+For example:
+
+```bash
+curl -i -X POST http://localhost:8081/api/Payments \
+  -H "Content-Type: application/json" \
+  -d '{"cardNumber":"1234567890123451","expiryMonth":12,"expiryYear":2099,"currency":"GBP","amount":1050,"cvv":"123"}'
+```
+
+Follow the returned `Location` to retrieve the payment. The examples below also work against the
+container by replacing `https://localhost:7092` with `http://localhost:8081`.
+
+The Dockerfile publishes only the API using the .NET 8 SDK, then copies the output into an ASP.NET
+runtime image and runs as its non-root `app` user. Source files and the SDK stay out of the final image.
+The container runs in Production, so Swagger UI is disabled. This local demo binds the gateway to
+loopback over HTTP; it does not configure certificates. The existing HTTPS redirection middleware
+logs a warning on the first HTTP request because no HTTPS port is configured, and serves the request
+over HTTP. A production host would need TLS termination and the corresponding proxy configuration.
+
+To stop and remove this stack:
+
+```bash
+docker compose down
+```
+
+Payments are held in process memory and disappear whenever the gateway restarts.
+
+### With the .NET SDK
+
 Needs the .NET 8 SDK, and Docker for the bank simulator.
 
 ```bash
-docker compose up -d                          # start the bank simulator (port 8080)
+docker compose up -d bank_simulator           # start only the bank simulator (port 8080)
 dotnet run --project src/PaymentGateway.Api    # start the gateway (https://localhost:7092)
 ```
 
@@ -262,5 +304,7 @@ src/PaymentGateway.Api
     Services/       validator, currency allowlist, bank client, in-memory repository
 test/PaymentGateway.Api.Tests
 imposters/          bank simulator configuration (provided, unchanged)
-docker-compose.yml  runs the bank simulator
+Dockerfile          builds and packages the API
+.dockerignore       excludes local build output and unrelated files from the build context
+docker-compose.yml  runs the gateway and bank simulator
 ```
