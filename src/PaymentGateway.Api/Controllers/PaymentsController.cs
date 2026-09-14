@@ -20,8 +20,6 @@ public class PaymentsController : Controller
         _bankClient = bankClient;
     }
 
-    // Async although the in-memory store is synchronous: the persistence layer is expected to become a
-    // real database, where the read will be async, and this keeps the action signature stable.
     [HttpGet("{id:guid}")]
     public ActionResult<GetPaymentResponse> GetPayment(Guid id)
     {
