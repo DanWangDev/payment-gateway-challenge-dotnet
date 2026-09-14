@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 
 using PaymentGateway.Api.Controllers;
-using PaymentGateway.Api.Models;
+using PaymentGateway.Api.Models.Responses;
 using PaymentGateway.Api.Resources;
 using PaymentGateway.Api.Services;
 
@@ -15,7 +15,12 @@ builder.Services.AddControllers()
     .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SupportNonNullableReferenceTypes();
+    options.UseAllOfToExtendReferenceSchemas();
+    options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, "PaymentGateway.Api.xml"));
+});
 
 // Requests the framework cannot bind are reported with the same rejected shape as a failed rule, so
 // merchants have one contract to handle. Validation still runs before the action.
@@ -26,10 +31,9 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
         var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<PaymentsController>>();
         // Binding errors can contain submitted values, so log only a fixed description.
         logger.LogInformation("Payment rejected: request body could not be bound");
-        return new BadRequestObjectResult(new
+        return new BadRequestObjectResult(new RejectedPaymentResponse
         {
-            status = PaymentStatus.Rejected,
-            errors = new[] { PaymentRejectionMessages.BodyUnreadable }
+            Errors = new[] { PaymentRejectionMessages.BodyUnreadable }
         });
     };
 });
