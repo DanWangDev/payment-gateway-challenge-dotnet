@@ -1,0 +1,503 @@
+{
+  "info": {
+    "name": "Payment Gateway - Local simulator",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run docker compose up --build -d, then run this collection in order. Defaults to http://localhost:8081. For dotnet run, set baseUrl to https://localhost:7092 and trust the development certificate. No environment or authentication is required. Use only synthetic card data with the supplied simulator. Each run creates two payments; restarting the gateway clears them. Each request generates a trace ID available as lastTraceId in collection variables and in the Postman Console."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081",
+      "type": "string",
+      "description": "No trailing slash. Docker: http://localhost:8081; local .NET: https://localhost:7092."
+    },
+    {
+      "key": "authorizedId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authorizedResponse",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "declinedId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "declinedResponse",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "lastTraceId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const traceId = pm.variables.replaceIn('{{$guid}}').replace(/-/g, '');",
+          "const spanId = pm.variables.replaceIn('{{$guid}}').replace(/-/g, '').slice(0,16);",
+          "pm.variables.set('traceparent', '00-' + traceId + '-' + spanId + '-01');",
+          "pm.collectionVariables.set('lastTraceId', traceId);",
+          "console.log('TraceId: ' + traceId);"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Authorize payment and normalize currency",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "Simulator card ending 7 returns Authorized. Saves the payment ID and response for the following GET. Synthetic test data only.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cardNumber\": \"1234567890120007\",\n  \"expiryMonth\": 12,\n  \"expiryYear\": 2099,\n  \"currency\": \" gbp \",\n  \"amount\": 1050,\n  \"cvv\": \"012\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.unset('authorizedId');",
+              "pm.collectionVariables.unset('authorizedResponse');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Payment fields match the request', () => {",
+              "  pm.expect(body.status).to.eql('Authorized');",
+              "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+              "  pm.expect(body.id).not.to.eql('00000000-0000-0000-0000-000000000000');",
+              "  pm.expect(body.cardNumberLastFour).to.eql('0007');",
+              "  pm.expect(body.currency).to.eql('GBP');",
+              "  pm.expect(body.amount).to.eql(1050);",
+              "  pm.expect(body.expiryMonth).to.eql(12);",
+              "  pm.expect(body.expiryYear).to.eql(2099);",
+              "});",
+              "pm.test('Location points to the created payment', () => {",
+              "  pm.expect(pm.response.headers.get('Location')).to.eql(pm.variables.get('baseUrl') + '/api/Payments/' + body.id);",
+              "});",
+              "pm.test('Response excludes full card number and CVV', () => {",
+              "  pm.expect(body).not.to.have.property('cardNumber');",
+              "  pm.expect(body).not.to.have.property('cvv');",
+              "  pm.expect(pm.response.text()).not.to.include('1234567890120007');",
+              "});",
+              "if (pm.response.code === 201 && body.id) {",
+              "  pm.collectionVariables.set('authorizedId', body.id);",
+              "  pm.collectionVariables.set('authorizedResponse', JSON.stringify(body));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Retrieve authorized payment",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments/{{authorizedId}}",
+        "description": "Run the matching POST first. Compares all returned fields with the saved POST response. Repeat the POST after restarting the gateway because storage is in memory."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('authorizedId')) { throw new Error('Run the matching POST request first.'); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('GET matches the stored POST response', () => {",
+              "  pm.expect(pm.response.json()).to.deep.eql(JSON.parse(pm.collectionVariables.get('authorizedResponse')));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Decline payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "Simulator card ending 2 returns Declined. Saves the payment ID and response for the following GET. Synthetic test data only.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cardNumber\": \"1234567890123452\",\n  \"expiryMonth\": 12,\n  \"expiryYear\": 2099,\n  \"currency\": \"GBP\",\n  \"amount\": 1050,\n  \"cvv\": \"012\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.unset('declinedId');",
+              "pm.collectionVariables.unset('declinedResponse');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Payment fields match the request', () => {",
+              "  pm.expect(body.status).to.eql('Declined');",
+              "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+              "  pm.expect(body.id).not.to.eql('00000000-0000-0000-0000-000000000000');",
+              "  pm.expect(body.cardNumberLastFour).to.eql('3452');",
+              "  pm.expect(body.currency).to.eql('GBP');",
+              "  pm.expect(body.amount).to.eql(1050);",
+              "  pm.expect(body.expiryMonth).to.eql(12);",
+              "  pm.expect(body.expiryYear).to.eql(2099);",
+              "});",
+              "pm.test('Location points to the created payment', () => {",
+              "  pm.expect(pm.response.headers.get('Location')).to.eql(pm.variables.get('baseUrl') + '/api/Payments/' + body.id);",
+              "});",
+              "pm.test('Response excludes full card number and CVV', () => {",
+              "  pm.expect(body).not.to.have.property('cardNumber');",
+              "  pm.expect(body).not.to.have.property('cvv');",
+              "  pm.expect(pm.response.text()).not.to.include('1234567890123452');",
+              "});",
+              "if (pm.response.code === 201 && body.id) {",
+              "  pm.collectionVariables.set('declinedId', body.id);",
+              "  pm.collectionVariables.set('declinedResponse', JSON.stringify(body));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Retrieve declined payment",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments/{{declinedId}}",
+        "description": "Run the matching POST first. Compares all returned fields with the saved POST response. Repeat the POST after restarting the gateway because storage is in memory."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('declinedId')) { throw new Error('Run the matching POST request first.'); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('GET matches the stored POST response', () => {",
+              "  pm.expect(pm.response.json()).to.deep.eql(JSON.parse(pm.collectionVariables.get('declinedResponse')));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Reject invalid card number",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "A short card number is rejected before any bank call.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cardNumber\": \"1234\",\n  \"expiryMonth\": 12,\n  \"expiryYear\": 2099,\n  \"currency\": \"GBP\",\n  \"amount\": 1050,\n  \"cvv\": \"012\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('Consistent rejection contract', () => {",
+              "  pm.expect(pm.response.json()).to.deep.eql({status:'Rejected',errors:[\"Card number must be 14 to 19 digits.\"]});",
+              "});",
+              "pm.test('No payment Location', () => pm.expect(pm.response.headers.has('Location')).to.be.false);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Reject malformed JSON",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "Exercises framework binding failure with incomplete JSON.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"cardNumber\":",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('Consistent rejection contract', () => {",
+              "  pm.expect(pm.response.json()).to.deep.eql({status:'Rejected',errors:[\"The request body could not be read.\"]});",
+              "});",
+              "pm.test('No payment Location', () => pm.expect(pm.response.headers.has('Location')).to.be.false);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Reject explicit null currency",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "Framework validation rejects explicit null before the controller normalizes currency.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cardNumber\": \"1234567890123451\",\n  \"expiryMonth\": 12,\n  \"expiryYear\": 2099,\n  \"currency\": null,\n  \"amount\": 1050,\n  \"cvv\": \"012\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('Consistent rejection contract', () => {",
+              "  pm.expect(pm.response.json()).to.deep.eql({status:'Rejected',errors:[\"The request body could not be read.\"]});",
+              "});",
+              "pm.test('No payment Location', () => pm.expect(pm.response.headers.has('Location')).to.be.false);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Bank 503 becomes gateway 502",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments",
+        "description": "The simulator returns HTTP 503 for a card ending in zero. No payment is created.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cardNumber\": \"1234567890123450\",\n  \"expiryMonth\": 12,\n  \"expiryYear\": 2099,\n  \"currency\": \"GBP\",\n  \"amount\": 1050,\n  \"cvv\": \"012\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 502 Bad Gateway', () => pm.response.to.have.status(502));",
+              "pm.test('ProblemDetails describes the failure', () => {",
+              "  pm.expect(pm.response.json().status).to.eql(502);",
+              "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+              "});",
+              "pm.test('No payment Location', () => pm.expect(pm.response.headers.has('Location')).to.be.false);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Unknown payment returns 404",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "traceparent",
+            "value": "{{traceparent}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/Payments/00000000-0000-0000-0000-000000000000",
+        "description": "Uses a valid GUID that the gateway does not generate."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 404 Not Found', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

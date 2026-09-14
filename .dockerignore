@@ -1,0 +1,16 @@
+.git
+.github
+.vs
+.idea
+**/bin
+**/obj
+**/TestResults
+coverage
+test
+imposters
+**/*.user
+**/*.suo
+**/*.pfx
+**/*.p12
+.env
+.env.*
