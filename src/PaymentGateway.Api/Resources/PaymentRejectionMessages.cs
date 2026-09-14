@@ -15,6 +15,10 @@ public static class PaymentRejectionMessages
     public const string AmountInvalid = "Amount must be greater than zero.";
     public const string CvvInvalid = "CVV must be 3 or 4 digits.";
 
+    // Reported when the framework cannot bind the request at all: malformed JSON, an ill-typed value, or
+    // an explicit null on a member that cannot be null.
+    public const string BodyUnreadable = "The request body could not be read.";
+
     // Built from the supported list rather than hard-coded, so adding a currency cannot leave this stale.
     public static readonly string CurrencyUnsupported = $"Currency must be one of {string.Join(", ", SupportedCurrencies.Currencies)}.";
 }
