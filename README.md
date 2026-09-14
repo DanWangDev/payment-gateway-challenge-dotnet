@@ -70,6 +70,10 @@ dotnet test
 ```
 
 Swagger UI is at `https://localhost:7092/swagger` in Development.
+The generated OpenAPI document is at `https://localhost:7092/swagger/v1/swagger.json`.
+It includes request field descriptions and simulator examples, POST responses (201/400/502), and
+GET responses (200/404). Both validation and binding failures use `RejectedPaymentResponse`;
+bank failures and missing payments use the framework's `ProblemDetails` shape.
 
 The gateway reads the bank's address from `BankSimulator:BaseUrl` in `appsettings.json`, and refuses to
 start if it is missing or is not an absolute HTTP(S) URL. To override it, set the

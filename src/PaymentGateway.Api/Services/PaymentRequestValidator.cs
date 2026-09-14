@@ -11,6 +11,7 @@ public static class PaymentRequestValidator
     /// <summary>
     /// Returns one message per failed rule, in a stable order. An empty list means the request is valid.
     /// </summary>
+    /// <param name="request">The payment fields to validate, with currency already normalized.</param>
     /// <param name="today">
     /// The caller supplies the date so validation is independent of the system clock.
     /// </param>

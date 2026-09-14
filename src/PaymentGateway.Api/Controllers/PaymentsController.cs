@@ -25,7 +25,13 @@ public class PaymentsController : Controller
         _logger = logger;
     }
 
+    /// <summary>Retrieve a stored payment.</summary>
+    /// <param name="id">The payment ID returned by POST.</param>
+    /// <response code="200">The stored Authorized or Declined payment, with only the card's last four digits.</response>
+    /// <response code="404">No payment exists with this ID in this gateway instance.</response>
     [HttpGet("{id:guid}")]
+    [ProducesResponseType(typeof(GetPaymentResponse), StatusCodes.Status200OK, "application/json")]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound, "application/problem+json")]
     public ActionResult<GetPaymentResponse> GetPayment(Guid id)
     {
         var payment = _paymentsRepository.Get(id);
@@ -33,7 +39,19 @@ public class PaymentsController : Controller
         return payment is null ? NotFound() : Ok(ToResponse(payment));
     }
 
+    /// <summary>Submit a card payment to the acquiring bank.</summary>
+    /// <remarks>
+    /// Both Authorized and Declined decisions create a payment. Follow the Location response header
+    /// to retrieve it. Invalid requests never reach the bank. A bank failure provides no reliable
+    /// decision; retrying may duplicate a charge because this API does not implement idempotency.
+    /// </remarks>
+    /// <response code="201">An Authorized or Declined payment was stored; Location identifies its GET URL.</response>
+    /// <response code="400">Validation or request binding failed. Status is Rejected and nothing is stored.</response>
+    /// <response code="502">The bank failed, timed out, or supplied no usable decision. Nothing is stored.</response>
     [HttpPost]
+    [ProducesResponseType(typeof(PostPaymentResponse), StatusCodes.Status201Created, "application/json")]
+    [ProducesResponseType(typeof(RejectedPaymentResponse), StatusCodes.Status400BadRequest, "application/json")]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status502BadGateway, "application/problem+json")]
     public async Task<ActionResult<PostPaymentResponse>> PostPayment(
         PostPaymentRequest request,
         CancellationToken cancellationToken)
@@ -45,7 +63,7 @@ public class PaymentsController : Controller
         if (errors.Count > 0)
         {
             _logger.LogInformation("Payment rejected: {Errors}", string.Join("; ", errors));
-            return BadRequest(new { status = PaymentStatus.Rejected, errors });
+            return BadRequest(new RejectedPaymentResponse { Errors = errors });
         }
 
         var status = await _bankClient.AuthorizeAsync(request, cancellationToken);
