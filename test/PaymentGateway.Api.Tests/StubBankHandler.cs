@@ -9,9 +9,14 @@ namespace PaymentGateway.Api.Tests;
 /// </summary>
 internal sealed class StubBankHandler : HttpMessageHandler
 {
-    private readonly Func<HttpRequestMessage, HttpResponseMessage> _respond;
+    private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _respond;
 
     public StubBankHandler(Func<HttpRequestMessage, HttpResponseMessage> respond)
+        : this((request, _) => Task.FromResult(respond(request)))
+    {
+    }
+
+    public StubBankHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
     {
         _respond = respond;
     }
@@ -32,7 +37,7 @@ internal sealed class StubBankHandler : HttpMessageHandler
             request.RequestUri,
             request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken)));
 
-        return _respond(request);
+        return await _respond(request, cancellationToken);
     }
 
     internal sealed record CapturedRequest(HttpMethod Method, Uri? Uri, string Body);

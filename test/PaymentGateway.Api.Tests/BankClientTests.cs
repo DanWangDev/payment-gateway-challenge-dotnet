@@ -38,6 +38,20 @@ public class BankClientTests
         Assert.Equal("123", body.RootElement.GetProperty("cvv").GetString());
     }
 
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"authorization_code": "9f8c1b6e"}""")]
+    [InlineData("""{"authorized": null}""")]
+    [InlineData("null")]
+    public async Task ReturnsNullWhenTheBankProvidesNoDecision(string json)
+    {
+        var handler = new StubBankHandler(_ => StubBankHandler.Json(HttpStatusCode.OK, json));
+
+        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+
+        Assert.Null(status);
+    }
+
     [Fact]
     public async Task ReturnsAuthorizedWhenTheBankAuthorizes()
     {
@@ -80,6 +94,35 @@ public class BankClientTests
         var status = await CreateClient(handler).AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+    }
+
+    [Fact]
+    public async Task ReturnsNullWhenTheBankTimesOut()
+    {
+        // HttpClient reports a timeout as cancellation with an inner TimeoutException.
+        var handler = new StubBankHandler(_ => throw new TaskCanceledException(
+            "The bank request timed out.", new TimeoutException()));
+
+        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+
+        Assert.Null(status);
+    }
+
+    [Fact]
+    public async Task PropagatesCallerCancellationDuringTheBankRequest()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new StubBankHandler((_, cancellationToken) =>
+        {
+            cancellation.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(StubBankHandler.Json(HttpStatusCode.OK, """{"authorized": true}"""));
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateClient(handler).AuthorizeAsync(Request, cancellation.Token));
+
+        Assert.Equal(1, handler.CallCount);
     }
 
     [Fact]

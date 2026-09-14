@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 using PaymentGateway.Api.Models;
 using PaymentGateway.Api.Models.Requests;
@@ -7,8 +8,8 @@ using PaymentGateway.Api.Models.Requests;
 namespace PaymentGateway.Api.Services;
 
 /// <summary>
-/// Calls the acquiring bank. A null result means the bank gave no answer - unreachable, error status, or
-/// an unreadable body - which the caller reports as 502 rather than as a decline.
+/// Calls the acquiring bank. Returns null when the bank is unavailable or provides no valid decision.
+/// Caller cancellation propagates to the caller.
 /// </summary>
 public class BankClient
 {
@@ -41,18 +42,25 @@ public class BankClient
 
             var bankResponse = await response.Content.ReadFromJsonAsync<BankPaymentResponse>(cancellationToken);
 
-            if (bankResponse is null)
+            return bankResponse?.Authorized switch
             {
-                return null;
-            }
-
-            return bankResponse.Authorized ? PaymentStatus.Authorized : PaymentStatus.Declined;
+                true => PaymentStatus.Authorized,
+                false => PaymentStatus.Declined,
+                _ => null
+            };
         }
         catch (Exception exception) when (exception is HttpRequestException or JsonException)
         {
             return null;
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
-    private sealed record BankPaymentResponse(bool Authorized);
+    // Model the bank's authorization code, although this exercise does not store or return it.
+    private sealed record BankPaymentResponse(
+        bool? Authorized,
+        [property: JsonPropertyName("authorization_code")] string? AuthorizationCode);
 }
