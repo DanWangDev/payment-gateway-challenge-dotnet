@@ -86,6 +86,30 @@ $env:BankSimulator__BaseUrl = 'http://localhost:8080'
 dotnet run --project src/PaymentGateway.Api
 ```
 
+### With Postman
+
+Import [the collection](postman/PaymentGateway.postman_collection.json) into Postman, then run it in
+the listed order using the Collection Runner, or send individual requests. No environment file is
+needed. The collection's `baseUrl` variable defaults to `http://localhost:8081` for Docker; change it
+to `https://localhost:7092` for `dotnet run` (with a trusted development certificate). Omit the trailing
+slash.
+
+The nine requests cover authorization, decline, retrieval of both payments, invalid card number,
+malformed JSON, explicit null currency, a bank 503, and an unknown payment. Scripts check responses
+and save payment IDs automatically. Run each POST before its matching GET; repeat the POST if the
+gateway has restarted. Only synthetic simulator card numbers are included.
+
+Each request sends a fresh `traceparent`. Its trace ID is printed in the Postman Console and saved as
+the collection variable `lastTraceId`, so it can be matched against `docker compose logs gateway`.
+
+If Node.js is installed, the same collection can also be run from the repository root with Newman:
+
+```bash
+npx --yes --package newman newman run postman/PaymentGateway.postman_collection.json
+```
+
+Unlike the .NET test suite, this collection needs the gateway and real simulator running.
+
 ### Trying it by hand
 
 ```bash
@@ -305,6 +329,7 @@ src/PaymentGateway.Api
 test/PaymentGateway.Api.Tests
 imposters/          bank simulator configuration (provided, unchanged)
 Dockerfile          builds and packages the API
+postman/            runnable API examples and response checks
 .dockerignore       excludes local build output and unrelated files from the build context
 docker-compose.yml  runs the gateway and bank simulator
 ```
