@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 using PaymentGateway.Api.Models;
 using PaymentGateway.Api.Models.Requests;
 using PaymentGateway.Api.Services;
@@ -45,11 +48,12 @@ public class BankClientTests
     [InlineData("null")]
     public async Task ReturnsNullWhenTheBankProvidesNoDecision(string json)
     {
-        var handler = new StubBankHandler(_ => StubBankHandler.Json(HttpStatusCode.OK, json));
+        var (client, logger) = CreateClientWithLogger(_ => StubBankHandler.Json(HttpStatusCode.OK, json));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+        Assert.Equal("MissingDecision", Assert.Single(logger.Entries).Properties["FailureReason"]);
     }
 
     [Fact]
@@ -67,45 +71,63 @@ public class BankClientTests
     [Fact]
     public async Task ReturnsDeclinedWhenTheBankDeclines()
     {
-        var handler = new StubBankHandler(_ => StubBankHandler.Json(
+        var (client, logger) = CreateClientWithLogger(_ => StubBankHandler.Json(
             HttpStatusCode.OK,
             """{"authorized": false, "authorization_code": ""}"""));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Equal(PaymentStatus.Declined, status);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Equal(PaymentStatus.Declined, entry.Properties["Status"]);
+        Assert.Equal(200, entry.Properties["StatusCode"]);
+        Assert.True(Assert.IsType<double>(entry.Properties["ElapsedMs"]) >= 0);
     }
 
     [Fact]
     public async Task ReturnsNullWhenTheBankReturnsAnErrorStatus()
     {
-        var handler = new StubBankHandler(_ => StubBankHandler.Json(HttpStatusCode.ServiceUnavailable, "{}"));
+        var (client, logger) = CreateClientWithLogger(_ => StubBankHandler.Json(HttpStatusCode.ServiceUnavailable, "{}"));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal("UnexpectedStatus", entry.Properties["FailureReason"]);
+        Assert.Equal(503, entry.Properties["StatusCode"]);
+        Assert.True(Assert.IsType<double>(entry.Properties["ElapsedMs"]) >= 0);
     }
 
     [Fact]
     public async Task ReturnsNullWhenTheBankIsUnreachable()
     {
-        var handler = new StubBankHandler(_ => throw new HttpRequestException("connection refused"));
+        var (client, logger) = CreateClientWithLogger(_ => throw new HttpRequestException(
+            HttpRequestError.ConnectionError, "connection refused"));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("TransportError", entry.Properties["FailureReason"]);
+        Assert.Equal(HttpRequestError.ConnectionError, entry.Properties["HttpRequestError"]);
+        Assert.Null(entry.Properties["StatusCode"]);
     }
 
     [Fact]
     public async Task ReturnsNullWhenTheBankTimesOut()
     {
         // HttpClient reports a timeout as cancellation with an inner TimeoutException.
-        var handler = new StubBankHandler(_ => throw new TaskCanceledException(
+        var (client, logger) = CreateClientWithLogger(_ => throw new TaskCanceledException(
             "The bank request timed out.", new TimeoutException()));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal("Timeout", entry.Properties["FailureReason"]);
     }
 
     [Fact]
@@ -119,24 +141,68 @@ public class BankClientTests
             return Task.FromResult(StubBankHandler.Json(HttpStatusCode.OK, """{"authorized": true}"""));
         });
 
+        var logger = new CapturingLogger<BankClient>();
+        var client = CreateClient(handler, logger);
+
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            CreateClient(handler).AuthorizeAsync(Request, cancellation.Token));
+            client.AuthorizeAsync(Request, cancellation.Token));
 
         Assert.Equal(1, handler.CallCount);
+        Assert.Empty(logger.Entries);
+    }
+
+    [Fact]
+    public async Task DoesNotLogCardDetailsFromAnException()
+    {
+        var request = new PostPaymentRequest
+        {
+            CardNumber = "4111111111111111",
+            ExpiryMonth = 3,
+            ExpiryYear = 2027,
+            Currency = "GBP",
+            Amount = 1050,
+            Cvv = "9876"
+        };
+        var (client, logger) = CreateClientWithLogger(_ => throw new HttpRequestException(
+            $"Failed for card {request.CardNumber}, CVV {request.Cvv}"));
+
+        await client.AuthorizeAsync(request, default);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Null(entry.Exception);
+        foreach (var value in entry.Properties.Values.Append(entry.Message))
+        {
+            Assert.DoesNotContain(request.CardNumber, value?.ToString() ?? string.Empty);
+            Assert.DoesNotContain(request.Cvv, value?.ToString() ?? string.Empty);
+        }
     }
 
     [Fact]
     public async Task ReturnsNullWhenTheBankResponseIsUnreadable()
     {
-        var handler = new StubBankHandler(_ => StubBankHandler.Json(HttpStatusCode.OK, "not json"));
+        var (client, logger) = CreateClientWithLogger(_ => StubBankHandler.Json(HttpStatusCode.OK, "not json"));
 
-        var status = await CreateClient(handler).AuthorizeAsync(Request, default);
+        var status = await client.AuthorizeAsync(Request, default);
 
         Assert.Null(status);
+        Assert.Equal("UnreadableResponse", Assert.Single(logger.Entries).Properties["FailureReason"]);
     }
 
-    private static BankClient CreateClient(HttpMessageHandler handler)
+    private static BankClient CreateClient(
+        HttpMessageHandler handler,
+        ILogger<BankClient>? logger = null)
     {
-        return new BankClient(new HttpClient(handler) { BaseAddress = new Uri("http://bank.test/") });
+        return new BankClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://bank.test/") },
+            logger ?? NullLogger<BankClient>.Instance);
+    }
+
+    private static (BankClient Client, CapturingLogger<BankClient> Logger) CreateClientWithLogger(
+        Func<HttpRequestMessage, HttpResponseMessage> respond)
+    {
+        var logger = new CapturingLogger<BankClient>();
+        var handler = new StubBankHandler(respond);
+
+        return (CreateClient(handler, logger), logger);
     }
 }

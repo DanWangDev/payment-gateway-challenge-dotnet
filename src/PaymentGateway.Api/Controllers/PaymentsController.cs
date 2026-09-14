@@ -13,11 +13,16 @@ public class PaymentsController : Controller
 {
     private readonly PaymentsRepository _paymentsRepository;
     private readonly BankClient _bankClient;
+    private readonly ILogger<PaymentsController> _logger;
 
-    public PaymentsController(PaymentsRepository paymentsRepository, BankClient bankClient)
+    public PaymentsController(
+        PaymentsRepository paymentsRepository,
+        BankClient bankClient,
+        ILogger<PaymentsController> logger)
     {
         _paymentsRepository = paymentsRepository;
         _bankClient = bankClient;
+        _logger = logger;
     }
 
     [HttpGet("{id:guid}")]
@@ -39,6 +44,7 @@ public class PaymentsController : Controller
         var errors = PaymentRequestValidator.Validate(request, DateOnly.FromDateTime(DateTime.UtcNow));
         if (errors.Count > 0)
         {
+            _logger.LogInformation("Payment rejected: {Errors}", string.Join("; ", errors));
             return BadRequest(new { status = PaymentStatus.Rejected, errors });
         }
 
@@ -60,6 +66,7 @@ public class PaymentsController : Controller
         };
 
         _paymentsRepository.Add(payment);
+        _logger.LogInformation("Payment {PaymentId} {Status}", payment.Id, payment.Status);
 
         // Action names are matched without the Async suffix: MVC strips it for URL generation by default.
         return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, payment);
