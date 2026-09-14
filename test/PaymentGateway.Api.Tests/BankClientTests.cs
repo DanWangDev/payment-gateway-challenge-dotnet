@@ -40,7 +40,7 @@ public class BankClientTests
 
     [Theory]
     [InlineData("{}")]
-    [InlineData("""{"authorization_code": "9f8c1b6e"}""")]
+    [InlineData("""{"authorization_code": "3f2a1c9e-8b7d-4a6f-9c1e-2d4b6a8c0e5f"}""")]
     [InlineData("""{"authorized": null}""")]
     [InlineData("null")]
     public async Task ReturnsNullWhenTheBankProvidesNoDecision(string json)
@@ -57,7 +57,7 @@ public class BankClientTests
     {
         var handler = new StubBankHandler(_ => StubBankHandler.Json(
             HttpStatusCode.OK,
-            """{"authorized": true, "authorization_code": "9f8c1b6e"}"""));
+            """{"authorized": true, "authorization_code": "0bb07405-6d44-4b50-a14f-7ae0beff13ad"}"""));
 
         var status = await CreateClient(handler).AuthorizeAsync(Request, default);
 
