@@ -105,7 +105,7 @@ the collection variable `lastTraceId`, so it can be matched against `docker comp
 If Node.js is installed, the same collection can also be run from the repository root with Newman:
 
 ```bash
-npx --yes --package newman newman run postman/PaymentGateway.postman_collection.json
+npx --yes --package newman@6.2.1 newman run postman/PaymentGateway.postman_collection.json
 ```
 
 Unlike the .NET test suite, this collection needs the gateway and real simulator running.
