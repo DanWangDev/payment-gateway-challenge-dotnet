@@ -8,7 +8,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Logging;
 
+using PaymentGateway.Api.Controllers;
 using PaymentGateway.Api.Models;
 using PaymentGateway.Api.Models.Requests;
 using PaymentGateway.Api.Models.Responses;
@@ -65,6 +67,10 @@ public class PaymentsControllerTests
         Assert.NotEqual(Guid.Empty, payment.Id);
         Assert.EndsWith($"/api/Payments/{payment.Id}", response.Headers.Location!.ToString());
         Assert.Equal(1, bank.CallCount);
+        var entry = Assert.Single(factory.ControllerLog.Entries);
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Equal(payment.Id, entry.Properties["PaymentId"]);
+        Assert.Equal(PaymentStatus.Authorized, entry.Properties["Status"]);
     }
 
     [Fact]
@@ -207,6 +213,10 @@ public class PaymentsControllerTests
         Assert.Equal(
             "The request body could not be read.",
             responseBody.RootElement.GetProperty("errors")[0].GetString());
+        var entry = Assert.Single(factory.ControllerLog.Entries);
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Equal("Payment rejected: request body could not be bound", entry.Message);
+        Assert.Null(entry.Exception);
     }
 
     [Fact]
@@ -297,11 +307,14 @@ internal sealed class PaymentsApiFactory : WebApplicationFactory<Program>
 
     public PaymentsRepository Repository { get; } = new();
 
+    public CapturingLogger<PaymentsController> ControllerLog { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.ConfigureServices(services =>
         {
             services.AddSingleton(Repository);
+            services.AddSingleton<ILogger<PaymentsController>>(ControllerLog);
 
             // A typed client is registered under the simple type name - not the full name. If this ever
             // stops matching, the client silently makes real calls and the 502 tests fail on call count.

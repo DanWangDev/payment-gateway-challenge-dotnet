@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 using Microsoft.AspNetCore.Mvc;
 
+using PaymentGateway.Api.Controllers;
 using PaymentGateway.Api.Models;
 using PaymentGateway.Api.Resources;
 using PaymentGateway.Api.Services;
@@ -20,11 +21,17 @@ builder.Services.AddSwaggerGen();
 // merchants have one contract to handle. Validation still runs before the action.
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
-    options.InvalidModelStateResponseFactory = _ => new BadRequestObjectResult(new
+    options.InvalidModelStateResponseFactory = context =>
     {
-        status = PaymentStatus.Rejected,
-        errors = new[] { PaymentRejectionMessages.BodyUnreadable }
-    });
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<PaymentsController>>();
+        // Binding errors can contain submitted values, so log only a fixed description.
+        logger.LogInformation("Payment rejected: request body could not be bound");
+        return new BadRequestObjectResult(new
+        {
+            status = PaymentStatus.Rejected,
+            errors = new[] { PaymentRejectionMessages.BodyUnreadable }
+        });
+    };
 });
 
 builder.Services.AddSingleton<PaymentsRepository>();

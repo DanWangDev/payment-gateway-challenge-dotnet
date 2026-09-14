@@ -188,6 +188,36 @@ and the CVV is never stored or returned at all.
   localisation were ever needed, the right first move for a machine-consumed API is a stable `code` per
   error that merchants localise themselves - not server-side translation of prose.
 
+## Logging and tracing
+
+The gateway writes structured logs to the console:
+
+- Payment outcomes include `PaymentId` and `Status` at Information level. Validation and request-binding
+  rejections are also Information events; they are expected client errors.
+- Bank decisions include `Status`, `StatusCode` and `ElapsedMs`. Bank failures are Warning events with
+  a fixed `FailureReason` (`UnexpectedStatus`, `TransportError`, `Timeout`, `MissingDecision` or
+  `UnreadableResponse`), elapsed time and an HTTP status when available. Transport failures also
+  include the .NET `HttpRequestError` classification. Caller cancellation propagates without a
+  bank-failure warning.
+- Request/response bodies, full card numbers, CVVs and raw exception messages are not included in
+  these application logs. Request-binding failures use a fixed description because framework error
+  details can contain submitted values.
+
+The simple console formatter includes the platform's logging scopes, including `TraceId` and `SpanId`.
+Search for a `TraceId` to connect a bank event to the resulting payment or rejection, including requests
+that fail before a payment ID exists. ASP.NET Core accepts W3C `traceparent` headers, and the normal
+`HttpClient` pipeline propagates trace context to the bank. The bank must consume that context for its
+own telemetry to correlate; propagation alone does not provide a tracing backend.
+
+To check correlation manually, add this header to one of the POST examples above:
+
+```bash
+-H "traceparent: 00-0123456789abcdef0123456789abcdef-1111111111111111-01"
+```
+
+The gateway's application logs for that request should show
+`TraceId:0123456789abcdef0123456789abcdef`. No custom correlation middleware is needed.
+
 ## Assumptions and out of scope
 
 Recorded here so they read as decisions rather than oversights:
@@ -202,8 +232,8 @@ Recorded here so they read as decisions rather than oversights:
   refund, with webhooks and settlement files.
 - **Amounts are passed through unchanged as integer minor units.** The maximum accepted amount is
   2,147,483,647 minor units (£21,474,836.47 for GBP). Larger values are rejected during request binding.
-- **No custom payment logging, metrics or correlation scheme.** Framework logging and tracing remain
-  enabled. The gateway does not log full card numbers or CVVs.
+- **No metrics, trace exporter or centralized log storage.** Console logs and built-in trace context
+  support local investigation. Production monitoring would add collection, dashboards and alerts.
 - **Discarding bank references limits reconciliation and investigation.** The stored gateway payment
   does not retain the bank's authorization code.
 
@@ -214,6 +244,11 @@ Recorded here so they read as decisions rather than oversights:
 format and the call counts can be asserted. Coverage covers validation rules and their boundaries, the
 bank client's response mapping and failure modes (timeout, unreachable, error status, unreadable body,
 caller cancellation), and both endpoints end to end through `WebApplicationFactory`.
+
+Focused logging assertions share those behavior tests: outcome fields and levels, failure reasons,
+nonnegative bank duration, and no bank-failure log for caller cancellation. A separate regression test
+puts card details into an exception message and checks that neither rendered logs nor structured fields
+expose them. Console trace correlation is checked manually as described above.
 
 CI builds and tests every push and pull request, and publishes the coverage summary on the run.
 
